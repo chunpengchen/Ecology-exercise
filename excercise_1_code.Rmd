@@ -1,0 +1,54 @@
+---
+title: "excercise_1_code"
+author: "chenchunpeng"
+date: "2020/3/20"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# remove all current objects
+rm(list = ls())
+```
+
+```{r}
+# load R data and save
+data() 
+library(ade4)
+data(package = "ade4")
+data("doubs")
+str(doubs)
+write.csv(doubs$env, "data/doubs_env.csv")
+```
+
+```{r}
+# load data and checking the data structure
+mydata <- read.csv("data/doubs_env.csv")
+head(mydata)
+mydata <- mydata[,-1]
+head(mydata)
+hist(mydata$alt,
+     col = "green",
+     main = "altitude distribution",
+     xlab = "altitude")
+```
+
+```{r}
+# correlation analysis and visualization
+library(corrplot)
+res1 <- cor(mydata)
+res1
+write.table(res1,"results/coeff.txt",sep="\t")
+library(psych)
+res2 <- corr.test(mydata)
+res2$r
+res2$ci
+corr_fig <- corrplot(res1)
+pairs.panels(mydata[,2:6])
+```
+
+
+
