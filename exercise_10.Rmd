@@ -1,0 +1,264 @@
+---
+title: "exercise_10"
+author: "chenchunpeng"
+date: "2020/5/11"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+setwd('E:/Ecology/exercise_10/')
+```
+
+```{r}
+rm(list = ls())
+```
+
+```{r}
+# load package
+library(caret)
+```
+
+```{r}
+# Load a dataset
+data <- read.csv("./data/npcl11.csv")
+str(data)
+```
+
+```{r}
+#preProcess data
+library(Hmisc, quietly=TRUE)
+contents(data)
+summary(data)
+```
+
+```{r}
+library(fBasics, quietly=TRUE)
+# Calculate skewness
+skewness(data, na.rm=TRUE)
+```
+
+```{r}
+#impute NA in the dataset
+library(skimr) 
+# Data integrity and basic statistics
+skimmed <- skim_to_wide(data)
+skimmed[, 2:12]
+```
+
+```{r}
+#building model
+preProcess_missingdata_model <- preProcess(data[,2:12], 
+                                           method='knnImpute')
+preProcess_missingdata_model
+```
+
+```{r}
+library(RANN) 
+
+data_NA <- predict(preProcess_missingdata_model, 
+                   newdata = data)
+```
+
+```{r}
+# There is no NA
+anyNA(data_NA)
+```
+
+```{r}
+# for one-hot code
+# Type code to digital code
+dummies_model <- dummyVars(loss_rate ~ ., 
+                           data= data_NA)
+data_NA_dum_mat <- predict(dummies_model, 
+                           newdata = data_NA)
+data_NA_dum <- data.frame(data_NA_dum_mat)#rebuild a dataframe including target
+loss_rate <- data_NA$loss_rate
+data_clean <- cbind(loss_rate,data_NA_dum)
+head(data_clean)
+```
+
+```{r}
+##=========================================
+# transforming data
+
+library(tidyverse)
+#Classification according to loss rate
+data_class <- data [,-1] %>% 
+  mutate(loss_rate = 
+           case_when(loss_rate >= 0.4 ~ 'serious',
+                     loss_rate < 0.4 ~ 'normal')) %>% 
+  rename(loss_degree=loss_rate)
+head(data_class)
+write.csv(data_class, file = "./data/data_class.csv")
+```
+
+```{r}
+##========================================
+##select features
+library('randomForest')
+x = as.matrix(data_class[, 1:11])
+y = as.factor(data_class$loss_degree)
+
+#visualize feature importance
+featurePlot(x, y, plot = "box",
+            strip=strip.custom(par.strip.text=list(cex=.7)),
+            scales = list(x = list(relation = "free"), 
+                          y = list(relation="free")))
+
+featurePlot(x, y, plot = "density",
+            strip=strip.custom(par.strip.text=list(cex=.7)),
+            scales = list(x = list(relation="free"), 
+                          y = list(relation="free")))
+```
+
+```{r}
+##estimate feature importance using one of three methods (caret)
+#automatically selecting a subset of the most predictive features
+options(warn=-1)
+set.seed(1234)
+
+subsets <- c(1:5, 8, 11)
+ctrl <- rfeControl(functions = rfFuncs, #random forest algorithem
+                   method = "repeatedcv",
+                   repeats = 5,
+                   verbose = FALSE)
+ImProfile <- rfe(x, y, 
+                 sizes=subsets, 
+                 rfeControl=ctrl)
+print(ImProfile)
+predictors(ImProfile)# list the chosen features
+plot(ImProfile, type=c("g", "o"))# plot the results
+```
+
+```{r}
+# searching for and removing redundant features
+corr_Matrix <- cor(data_class[,1:11])
+print(corr_Matrix)
+highlyCorr <- findCorrelation(corr_Matrix, cutoff=0.5)
+print(highlyCorr)
+```
+
+```{r}
+#ranking features by importance
+control <- trainControl(method="repeatedcv", 
+                        number=10, repeats=3)# cross-validation
+model <- train(loss_degree~., 
+               data=data_class, 
+               method="rf", 
+               preProcess="scale", 
+               trControl=control)# train the model
+importance <- varImp(model, scale=FALSE)
+print(importance)# summarize importance
+plot(importance)# plot importance
+```
+
+```{r}
+##===============================================
+##train and tune models 
+#split the dataset
+set.seed(1234)
+train_idx <- createDataPartition(data_class$loss_degree, p=0.75, list=FALSE)
+training <- data_class[train_idx,]
+test <- data_class[-train_idx,]
+```
+
+```{r}
+##build rf model and evaluate its performance
+#build rf model
+set.seed(1234)
+rf_fit <- train(as.factor(loss_degree) ~ IA + PA + CA + Q + G, 
+                data = training, 
+                method = "rf")
+rf_fit
+plot(rf_fit)
+```
+
+```{r}
+#evaluate rf performance
+rf_pred <- predict(rf_fit, test)
+rf_pred
+confusionMatrix(reference = as.factor(test$loss_degree), 
+                data = rf_pred,
+                mode = "everything")
+# Completely accurate
+```
+
+```{r}
+#set uneLength or tuneGrid for better model performance
+
+ctrl <- trainControl(
+  method = 'cv',                  
+  number = 5,                     
+  savePredictions = 'final',
+  classProbs = T,                  
+  summaryFunction=twoClassSummary) 
+
+rf_fit <- train(as.factor(loss_degree) ~., #optimize mtry with tuneLength
+                data = training, 
+                method = "rf", 
+                tuneLength = 5,
+                trControl = ctrl,
+                verbose = FALSE
+)
+```
+
+```{r}
+#evaluate rf performance
+rf_pred <- predict(rf_fit, test)
+rf_pred
+confusionMatrix(reference = as.factor(test$loss_degree), 
+                data = rf_pred,
+                mode = "everything")
+
+library(MLeval)
+
+x <- evalm(rf_fit)
+x$roc
+x$stdres
+```
+
+```{r}
+##=================================================
+# compare algorithms
+library(caretEnsemble)
+
+# Stacking Algorithms - Run multiple algos in one call.
+ctrl <- trainControl(method="repeatedcv", 
+                     number=10, 
+                     repeats=3,
+                     savePredictions=TRUE, 
+                     classProbs=TRUE)
+```
+
+```{r}
+algorithmList <- c('rf', 'rpart', 'svmRadial')
+
+set.seed(1234)
+models <- caretList(as.factor(loss_degree) ~ .,
+                    data=training, 
+                    trControl=ctrl, 
+                    methodList=algorithmList) 
+```
+
+```{r}
+# show results
+results <- resamples(models)
+summary(results)
+scales <- list(x=list(relation="free"), y=list(relation="free"))
+bwplot(results, scales=scales)
+```
+
+
+
+
+
+
+
+
+
